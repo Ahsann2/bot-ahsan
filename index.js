@@ -1,61 +1,44 @@
-// Import module yang diperlukan
-const makeWASocket = require("@whiskeysockets/baileys").default;
-const { useMultiFileAuthState } = require("@whiskeysockets/baileys");
-const express = require("express");
-const qrcode = require("qrcode-terminal");
+const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const express = require('express');
+const QRCode = require('qrcode');
+const fs = require('fs');
+const P = require('pino');
 
-// Inisialisasi aplikasi Express
-const app = express();
-app.use(express.json());
+(async () => {
+    const app = express();
+    const port = process.env.PORT || 3000; // Port default untuk Railway
 
-// Fungsi untuk memulai bot WhatsApp
-async function startBot() {
-    // Membuat state autentikasi (akan tersimpan di folder "auth_info")
-    const { state, saveCreds } = await useMultiFileAuthState("auth_info");
-
-    // Membuat koneksi WhatsApp dengan Baileys
+    const { state, saveCreds } = await useMultiFileAuthState('./auth');
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true // Akan menampilkan QR code di log
+        logger: P({ level: 'silent' }),
+        browser: ["Railway Bot", "Chrome", "1.0"],
     });
 
-    // Simpan kredensial setiap kali ada update
-    sock.ev.on("creds.update", saveCreds);
+    sock.ev.on('creds.update', saveCreds);
 
-    // Monitor status koneksi
-    sock.ev.on("connection.update", (update) => {
+    sock.ev.on('connection.update', async (update) => {
         const { connection, qr } = update;
+
         if (qr) {
-            // Tampilkan QR code di terminal
-            qrcode.generate(qr, { small: true });
-        }
-        if (connection === "open") {
-            console.log("✅ Bot WhatsApp Berhasil Terhubung!");
-        } else if (connection === "close") {
-            console.log("❌ Koneksi terputus, mencoba menyambung ulang...");
-            startBot(); // Restart bot jika koneksi terputus
-        }
-    });
+            console.log("Menerima QR Code, membuat link...");
+            const qrImage = await QRCode.toDataURL(qr); // Mengubah QR ke base64
+            fs.writeFileSync('./qr.html', `<img src="${qrImage}" alt="QR Code">`); // Simpan file HTML dengan QR
 
-    // API endpoint untuk mengirim pesan WhatsApp
-    app.post("/send-wa", async (req, res) => {
-        const { nomor, pesan } = req.body;
-        try {
-            // Format nomor: misalnya "6281234567890"
-            await sock.sendMessage(nomor + "@s.whatsapp.net", { text: pesan });
-            res.json({ success: true, message: "Pesan terkirim!" });
-        } catch (error) {
-            res.status(500).json({ success: false, error: error.message });
+            // Buat route untuk menampilkan QR
+            app.get('/', (req, res) => {
+                res.sendFile(__dirname + '/qr.html');
+            });
+
+            console.log(`QR Code tersedia di http://localhost:${port}`);
+        }
+
+        if (connection === 'open') {
+            console.log('Bot berhasil terhubung ke WhatsApp!');
         }
     });
 
-    return sock;
-}
-
-// Mulai bot
-startBot();
-
-// Jalankan server Express pada port 3000
-app.listen(3000, () => {
-    console.log("🚀 Server berjalan di port 3000");
-});
+    app.listen(port, () => {
+        console.log(`Server berjalan di port ${port}`);
+    });
+})();
